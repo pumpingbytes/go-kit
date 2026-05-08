@@ -104,6 +104,64 @@ func TestOpenWriterUsesTrimmedCustomFileAndAppends(t *testing.T) {
 	}
 }
 
+func TestOpenWriterUsesExactPathAndCreatesParentDirectories(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "nested", "logs", "agent.log")
+
+	writer, closer, err := OpenWriter(Options{Path: "  " + logPath + "  "}, "ignored")
+	if err != nil {
+		t.Fatalf("OpenWriter() error = %v, want nil", err)
+	}
+
+	if _, err := io.WriteString(writer, "hello exact path\n"); err != nil {
+		t.Fatalf("WriteString() error = %v", err)
+	}
+	if err := closer.Close(); err != nil {
+		t.Fatalf("closer.Close() error = %v", err)
+	}
+
+	got, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", logPath, err)
+	}
+	if string(got) != "hello exact path\n" {
+		t.Fatalf("file contents = %q, want %q", string(got), "hello exact path\n")
+	}
+}
+
+func TestOpenWriterPathTakesPrecedenceOverDirAndFile(t *testing.T) {
+	root := t.TempDir()
+	exactPath := filepath.Join(root, "custom", "agent.log")
+	legacyPath := filepath.Join(root, "legacy", "log", "legacy.log")
+
+	writer, closer, err := OpenWriter(Options{
+		Path: exactPath,
+		Dir:  filepath.Join(root, "legacy"),
+		File: "legacy.log",
+	}, "ignored")
+	if err != nil {
+		t.Fatalf("OpenWriter() error = %v, want nil", err)
+	}
+
+	if _, err := io.WriteString(writer, "preferred\n"); err != nil {
+		t.Fatalf("WriteString() error = %v", err)
+	}
+	if err := closer.Close(); err != nil {
+		t.Fatalf("closer.Close() error = %v", err)
+	}
+
+	got, err := os.ReadFile(exactPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", exactPath, err)
+	}
+	if string(got) != "preferred\n" {
+		t.Fatalf("file contents = %q, want %q", string(got), "preferred\n")
+	}
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("legacy path stat error = %v, want not exists", err)
+	}
+}
+
 func TestOpenWriterReturnsStderrAndErrorWhenLogDirCannotBeCreated(t *testing.T) {
 	root := t.TempDir()
 	filePath := filepath.Join(root, "not-a-dir")
@@ -112,6 +170,28 @@ func TestOpenWriterReturnsStderrAndErrorWhenLogDirCannotBeCreated(t *testing.T) 
 	}
 
 	writer, closer, err := OpenWriter(Options{Dir: filePath}, "app")
+	if err == nil {
+		t.Fatal("OpenWriter() error = nil, want non-nil")
+	}
+	if writer != os.Stderr {
+		t.Fatalf("writer = %T, want os.Stderr", writer)
+	}
+	if closer == nil {
+		t.Fatal("closer = nil, want fallback nop closer")
+	}
+	if err := closer.Close(); err != nil {
+		t.Fatalf("closer.Close() error = %v, want nil", err)
+	}
+}
+
+func TestOpenWriterReturnsStderrAndErrorWhenExactLogPathIsDirectory(t *testing.T) {
+	dir := t.TempDir()
+	exactPath := filepath.Join(dir, "as-dir")
+	if err := os.MkdirAll(exactPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	writer, closer, err := OpenWriter(Options{Path: exactPath}, "app")
 	if err == nil {
 		t.Fatal("OpenWriter() error = nil, want non-nil")
 	}
@@ -147,5 +227,3 @@ func TestOpenWriterReturnsStderrAndErrorWhenLogPathIsDirectory(t *testing.T) {
 		t.Fatalf("closer.Close() error = %v, want nil", err)
 	}
 }
-
-

@@ -9,13 +9,33 @@ import (
 	"github.com/pumpingbytes/go-kit/log/slogx"
 )
 
+// AccessLoggerOptions configures slog-backed access log emission.
+type AccessLoggerOptions struct {
+	LevelPolicy func(httpmw.AccessLogFields) slog.Level
+}
+
 // AccessLoggerCtx returns an httpmw.AccessLogger backed by logger fetched from context.
 func AccessLoggerCtx(ctx context.Context) httpmw.AccessLogger {
-	return AccessLogger(slogx.GetLogger(ctx))
+	return AccessLoggerWithOptions(slogx.GetLogger(ctx), AccessLoggerOptions{})
+}
+
+// AccessLoggerCtxWithOptions returns an httpmw.AccessLogger backed by logger fetched from context.
+func AccessLoggerCtxWithOptions(ctx context.Context, opts AccessLoggerOptions) httpmw.AccessLogger {
+	return AccessLoggerWithOptions(slogx.GetLogger(ctx), opts)
 }
 
 // AccessLogger returns an httpmw.AccessLogger backed by slog.
 func AccessLogger(base *slog.Logger) httpmw.AccessLogger {
+	return AccessLoggerWithOptions(base, AccessLoggerOptions{})
+}
+
+// AccessLoggerWithOptions returns an httpmw.AccessLogger backed by slog.
+func AccessLoggerWithOptions(base *slog.Logger, opts AccessLoggerOptions) httpmw.AccessLogger {
+	levelPolicy := opts.LevelPolicy
+	if levelPolicy == nil {
+		levelPolicy = defaultAccessLogLevelPolicy
+	}
+
 	return func(ctx context.Context, f httpmw.AccessLogFields) {
 		if base == nil {
 			return // it is the caller's responsibility to provide valid logger.
@@ -29,16 +49,19 @@ func AccessLogger(base *slog.Logger) httpmw.AccessLogger {
 			slog.Int(string(httpmw.HTTPAccessStatus), f.Status),
 			slog.Duration(string(httpmw.HTTPAccessLatency), f.Latency),
 			slog.String(string(httpmw.HTTPAccessClientIP), f.ClientIP),
+			slog.Int64(string(httpmw.HTTPAccessResponseBytes), f.ResponseBytes),
 		}
 		if f.UserAgent != "" {
 			attrs = append(attrs, slog.String(string(httpmw.HTTPAccessUserAgent), f.UserAgent))
 		}
 
-		msg := "request"
-		if f.Status >= http.StatusInternalServerError {
-			logger.Error(msg, attrs...)
-			return
-		}
-		logger.Info(msg, attrs...)
+		logger.Log(ctx, levelPolicy(f), "request", attrs...)
 	}
+}
+
+func defaultAccessLogLevelPolicy(f httpmw.AccessLogFields) slog.Level {
+	if f.Status >= http.StatusInternalServerError {
+		return slog.LevelError
+	}
+	return slog.LevelInfo
 }

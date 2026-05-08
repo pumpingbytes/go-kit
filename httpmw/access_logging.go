@@ -7,14 +7,14 @@ import (
 
 // AccessLogFields defines the standard access log schema.
 type AccessLogFields struct {
-	Method    string
-	Path      string
-	Status    int
-	Latency   time.Duration
-	ClientIP  string
-	UserAgent string
+	Method        string
+	Path          string
+	Status        int
+	Latency       time.Duration
+	ClientIP      string
+	ResponseBytes int64
+	UserAgent     string
 }
 
 // AccessLogger emits a single access-log record for the provided request context.
 type AccessLogger func(ctx context.Context, f AccessLogFields)
-

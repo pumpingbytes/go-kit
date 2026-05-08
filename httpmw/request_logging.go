@@ -37,3 +37,22 @@ func EnsureRequestID(ctx context.Context, req *http.Request, headerName string) 
 	return ctx, rid
 }
 
+// WithRequestID ensures each request has a request ID, stores it in the request
+// context, and writes it back to the response header.
+//
+// If headerName is empty, DefaultRequestIDHeader is used.
+func WithRequestID(headerName string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			effectiveHeaderName := headerName
+			if effectiveHeaderName == "" {
+				effectiveHeaderName = DefaultRequestIDHeader
+			}
+
+			ctx, rid := EnsureRequestID(r.Context(), r, effectiveHeaderName)
+			w.Header().Set(effectiveHeaderName, rid)
+
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}

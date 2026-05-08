@@ -22,12 +22,14 @@ const (
 // Suggested config shape:
 //
 //	log:
+//	  path: "/var/log/component/component.log" # optional exact log file path; takes precedence over dir/file
 //	  dir: "/var/log/component"   # optional; default: stderr
 //	  file: "component.log"      # optional; default: <app>.log when dir is set
 //	  format: "json"                            # json|text
 //	  level: "info"                             # debug|info|warn|error
 //	  add_source: false
 type Options struct {
+	Path      string `yaml:"path" env:"LOG_PATH"`
 	Dir       string `yaml:"dir" env:"LOG_DIR"`
 	File      string `yaml:"file" env:"LOG_FILE"`
 	Format    Format `yaml:"format" env:"LOG_FORMAT" default:"json"`
@@ -56,6 +58,14 @@ func (f *flushOnClose) Close() error {
 // If file-backed logging cannot be opened, stderr is returned together with the
 // encountered error so callers can choose whether to fail hard or fall back.
 func OpenWriter(opts Options, appName string) (io.Writer, Closer, error) {
+	path := strings.TrimSpace(opts.Path)
+	if path != "" {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return os.Stderr, nopCloser{}, err
+		}
+		return openBufferedFile(path)
+	}
+
 	if strings.TrimSpace(opts.Dir) == "" {
 		return os.Stderr, nopCloser{}, nil
 	}
@@ -71,8 +81,12 @@ func OpenWriter(opts Options, appName string) (io.Writer, Closer, error) {
 	}
 
 	logPath := filepath.Join(logDir, file)
+	return openBufferedFile(logPath)
+}
+
+func openBufferedFile(path string) (io.Writer, Closer, error) {
 	// O_APPEND to avoid truncation, 0600 as conservative default
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return os.Stderr, nopCloser{}, err
 	}

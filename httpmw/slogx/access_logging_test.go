@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -22,12 +23,13 @@ func TestAccessLoggerIncludesContextAndAccessFields(t *testing.T) {
 	ctx = httpmw.PutTraceIDs(ctx, "trace-1", "span-1")
 
 	logAccess(ctx, httpmw.AccessLogFields{
-		Method:    "GET",
-		Path:      "/healthz",
-		Status:    200,
-		Latency:   125 * time.Millisecond,
-		ClientIP:  "127.0.0.1",
-		UserAgent: "curl/8.0",
+		Method:        "GET",
+		Path:          "/healthz",
+		Status:        200,
+		Latency:       125 * time.Millisecond,
+		ClientIP:      "127.0.0.1",
+		ResponseBytes: 321,
+		UserAgent:     "curl/8.0",
 	})
 
 	record := decodeSingleRecord(t, buf.String())
@@ -59,6 +61,9 @@ func TestAccessLoggerIncludesContextAndAccessFields(t *testing.T) {
 	if got := record[string(httpmw.HTTPAccessClientIP)]; got != "127.0.0.1" {
 		t.Fatalf("client_ip = %v, want 127.0.0.1", got)
 	}
+	if got := record[string(httpmw.HTTPAccessResponseBytes)]; got != float64(321) {
+		t.Fatalf("response_bytes = %v, want 321", got)
+	}
 	if got := record[string(httpmw.HTTPAccessUserAgent)]; got != "curl/8.0" {
 		t.Fatalf("user_agent = %v, want curl/8.0", got)
 	}
@@ -73,16 +78,75 @@ func TestAccessLoggerUsesErrorLevelForServerErrors(t *testing.T) {
 	logAccess := AccessLogger(logger)
 
 	logAccess(context.Background(), httpmw.AccessLogFields{
-		Method:   "POST",
-		Path:     "/fail",
-		Status:   500,
-		Latency:  time.Second,
-		ClientIP: "10.0.0.1",
+		Method:        "POST",
+		Path:          "/fail",
+		Status:        500,
+		Latency:       time.Second,
+		ClientIP:      "10.0.0.1",
+		ResponseBytes: 0,
 	})
 
 	record := decodeSingleRecord(t, buf.String())
 	if got := record["level"]; got != "ERROR" {
 		t.Fatalf("level = %v, want ERROR", got)
+	}
+	if got := record[string(httpmw.HTTPAccessResponseBytes)]; got != float64(0) {
+		t.Fatalf("response_bytes = %v, want 0", got)
+	}
+}
+
+func TestAccessLoggerWithOptionsUsesCustomLevelPolicy(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logAccess := AccessLoggerWithOptions(logger, AccessLoggerOptions{
+		LevelPolicy: func(f httpmw.AccessLogFields) slog.Level {
+			switch {
+			case f.Status >= http.StatusInternalServerError:
+				return slog.LevelError
+			case f.Status >= http.StatusBadRequest:
+				return slog.LevelWarn
+			default:
+				return slog.LevelDebug
+			}
+		},
+	})
+
+	logAccess(context.Background(), httpmw.AccessLogFields{
+		Method:        http.MethodGet,
+		Path:          "/warn",
+		Status:        http.StatusBadRequest,
+		Latency:       50 * time.Millisecond,
+		ClientIP:      "127.0.0.1",
+		ResponseBytes: 12,
+	})
+
+	record := decodeSingleRecord(t, buf.String())
+	if got := record["level"]; got != "WARN" {
+		t.Fatalf("level = %v, want WARN", got)
+	}
+}
+
+func TestAccessLoggerWithOptionsAllowsCustomSuccessLevel(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logAccess := AccessLoggerWithOptions(logger, AccessLoggerOptions{
+		LevelPolicy: func(httpmw.AccessLogFields) slog.Level {
+			return slog.LevelDebug
+		},
+	})
+
+	logAccess(context.Background(), httpmw.AccessLogFields{
+		Method:        http.MethodGet,
+		Path:          "/debug",
+		Status:        http.StatusOK,
+		Latency:       20 * time.Millisecond,
+		ClientIP:      "127.0.0.1",
+		ResponseBytes: 2,
+	})
+
+	record := decodeSingleRecord(t, buf.String())
+	if got := record["level"]; got != "DEBUG" {
+		t.Fatalf("level = %v, want DEBUG", got)
 	}
 }
 

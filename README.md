@@ -87,11 +87,7 @@ import (
 )
 
 func middleware(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        ctx, requestID := httpmw.EnsureRequestID(r.Context(), r, httpmw.DefaultRequestIDHeader)
-        w.Header().Set(httpmw.DefaultRequestIDHeader, requestID)
-        next.ServeHTTP(w, r.WithContext(ctx))
-    })
+    return httpmw.WithRequestID(httpmw.DefaultRequestIDHeader)(next)
 }
 ```
 
@@ -111,7 +107,7 @@ import (
 
 func main() {
     logger, closer, err := logslogx.Load(kitlog.Options{
-        Dir:       "/var/my-service",
+        Path:      "/var/log/my-service/service.log",
         Format:    kitlog.FormatJSON,
         Level:     "info",
         AddSource: false,
@@ -128,7 +124,8 @@ func main() {
 
 Behavior summary:
 
-- if `Options.Dir` is empty, logs go to `stderr`
+- if `Options.Path` is set, logs go to that exact file path
+- else if `Options.Dir` is empty, logs go to `stderr`
 - otherwise logs go to `<Dir>/log/<File>`
 - if `File` is empty, the default file is `<appName>.log`
 - log level can be overridden with `<APPNAME>_LOG_LEVEL`
@@ -139,8 +136,8 @@ Behavior summary:
 package main
 
 import (
-    "context"
     "log/slog"
+    "net/http"
 
     "github.com/pumpingbytes/go-kit/httpmw"
     httpslogx "github.com/pumpingbytes/go-kit/httpmw/slogx"
@@ -149,16 +146,102 @@ import (
 func main() {
     base := slog.Default()
 
-    ctx := context.Background()
-    ctx = httpmw.PutRequestID(ctx, "req-123")
-    ctx = httpmw.PutTraceIDs(ctx, "trace-abc", "span-def")
+    accessLogger := httpslogx.AccessLoggerWithOptions(base, httpslogx.AccessLoggerOptions{
+        LevelPolicy: func(f httpmw.AccessLogFields) slog.Level {
+            switch {
+            case f.Status >= http.StatusInternalServerError:
+                return slog.LevelError
+            case f.Status >= http.StatusBadRequest:
+                return slog.LevelWarn
+            default:
+                return slog.LevelInfo
+            }
+        },
+    })
 
-    logger := httpslogx.EnrichLogger(ctx, base)
-    logger.Info("handling request")
+    handler := httpmw.WithRequestID(httpmw.DefaultRequestIDHeader)(
+        httpmw.WithAccessLogOptions(httpmw.AccessLogOptions{
+            Logger: accessLogger,
+            Skip:   httpmw.SkipPaths("/healthz", "/readyz"),
+        })(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            logger := httpslogx.EnrichLogger(r.Context(), base)
+            logger.Info("handling request")
+            w.WriteHeader(http.StatusNoContent)
+        })),
+    )
+
+    _ = handler
 }
 ```
 
-`httpmw/slogx.AccessLogger` emits a single access log entry using the standard access-log field names from `httpmw`.
+`httpmw/slogx.AccessLogger` and `AccessLoggerWithOptions` emit a single access log entry using the standard access-log field names from `httpmw`.
+
+The primary filter API is `Skip func(*http.Request) bool`, which keeps the middleware flexible across transports and routing setups. `httpmw.SkipPaths(...)` is a convenience helper for exact path matches.
+
+If you want custom slog levels for access logs, use `httpslogx.AccessLoggerWithOptions(...)` with a `LevelPolicy` function as shown above.
+
+Rule of thumb:
+
+- for plain `net/http`, use `WithRequestID(...)` and `WithAccessLogOptions(...)` directly
+- for Gin and similar frameworks, use `EnsureRequestID(...)`, then populate `httpmw.AccessLogFields` manually from framework-specific request/response data
+
+### Gin integration
+
+```go
+package middleware
+
+import (
+    "log/slog"
+    "time"
+
+    "github.com/gin-gonic/gin"
+    "github.com/pumpingbytes/go-kit/httpmw"
+    httpslogx "github.com/pumpingbytes/go-kit/httpmw/slogx"
+    logslogx "github.com/pumpingbytes/go-kit/log/slogx"
+)
+
+const RequestIDHeader = httpmw.DefaultRequestIDHeader
+
+func RequestLogging() gin.HandlerFunc {
+    return func(c *gin.Context) {
+        start := time.Now()
+
+        ctx, rid := httpmw.EnsureRequestID(c.Request.Context(), c.Request, RequestIDHeader)
+        c.Header(RequestIDHeader, rid)
+
+        base := logslogx.GetLogger(ctx)
+        ctx = logslogx.PutLogger(ctx, httpslogx.EnrichLogger(ctx, base))
+        c.Request = c.Request.WithContext(ctx)
+
+        c.Next()
+
+        logAccess := httpslogx.AccessLoggerWithOptions(base, httpslogx.AccessLoggerOptions{
+            LevelPolicy: func(f httpmw.AccessLogFields) slog.Level {
+                switch {
+                case f.Status >= 500:
+                    return slog.LevelError
+                case f.Status >= 400:
+                    return slog.LevelWarn
+                default:
+                    return slog.LevelInfo
+                }
+            },
+        })
+
+        logAccess(c.Request.Context(), httpmw.AccessLogFields{
+            Method:        c.Request.Method,
+            Path:          c.FullPath(),
+            Status:        c.Writer.Status(),
+            Latency:       time.Since(start),
+            ClientIP:      c.ClientIP(),
+            ResponseBytes: int64(c.Writer.Size()),
+            UserAgent:     c.Request.UserAgent(),
+        })
+    }
+}
+```
+
+For Gin and other frameworks, the current `httpmw` building blocks are usually the best fit: use `EnsureRequestID(...)`, populate `httpmw.AccessLogFields`, and emit through `httpmw/slogx`.
 
 ### CORS helper
 
@@ -222,6 +305,24 @@ ctx := context.Ctx(httpmw.RequestID, "req-123", httpmw.TraceID, "trace-abc")
 ```
 
 Keys use `github.com/ygrebnov/keys` for consistency.
+
+### `httpmw`
+
+- `WithRequestID(headerName)` is the plain `net/http` request ID middleware; an empty header name uses `DefaultRequestIDHeader`
+- `WithAccessLogOptions(...)` wraps `net/http` handlers and emits `AccessLogFields` after the response is written
+- `SkipPaths(...)` is an exact-path helper; for anything more advanced, prefer `Skip func(*http.Request) bool`
+
+### `httpmw/slogx`
+
+- `AccessLogger(...)` keeps the default access-log level policy: `ERROR` for `>= 500`, `INFO` otherwise
+- `AccessLoggerWithOptions(...)` lets you customize slog level selection with `LevelPolicy`
+- `EnrichLogger(...)` adds request correlation fields from context to a base logger
+
+### `log`
+
+- `Options.Path` writes to an exact file path and takes precedence over `Dir` and `File`
+- when `Path` is empty and `Dir` is set, logs go to `<Dir>/log/<File-or-app.log>`
+- when both `Path` and `Dir` are empty, logging falls back to `stderr`
 
 ## Development
 

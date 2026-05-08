@@ -17,8 +17,9 @@ import (
 // - env override: <APPNAME>_LOG_LEVEL (uppercased)
 //
 // Notes:
-// - If Options.Dir is empty, logs go to stderr.
-// - If Options.Dir is set, logs go to <Dir>/log/<File> (or <app>.log).
+// - If Options.Path is set, logs go to that exact file path.
+// - Else if Options.Dir is empty, logs go to stderr.
+// - Else logs go to <Dir>/log/<File> (or <app>.log).
 // - You can still override level with <APP>_LOG_LEVEL for quick local debugging.
 func Load(opts pkglog.Options, appName string) (*slog.Logger, pkglog.Closer, error) {
 	level := parseLevel(opts.Level)
