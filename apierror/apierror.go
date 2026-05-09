@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/pumpingbytes/go-kit/apperror"
 	"github.com/pumpingbytes/go-kit/context"
 )
 
@@ -130,6 +131,23 @@ func As(err error) (*APIError, bool) {
 		return ae, true
 	}
 	return nil, false
+}
+
+// FromAppError converts an apperror.Error into an APIError.
+//
+// It returns (nil, false) when err is nil or does not unwrap to apperror.Error.
+// Context and debug fields are not populated by this conversion.
+func FromAppError(err error) (*APIError, bool) {
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr == nil {
+		return nil, false
+	}
+
+	return &APIError{
+		Status:  appErr.Status,
+		Code:    appErr.Code,
+		Message: appErr.Message,
+	}, true
 }
 
 var ErrInternalServerError = New(CodeInternal, "internal error").

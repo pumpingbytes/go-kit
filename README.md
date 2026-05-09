@@ -75,6 +75,104 @@ The serialized error shape is:
 
 Use `Debug` only for internal diagnostics and call `Cleanup()` before returning an error to clients if needed.
 
+### Error sink examples
+
+For transport layers, a good pattern is to normalize everything into `apierror.APIError` before writing the response.
+
+#### Plain `net/http`
+
+```go
+package main
+
+import (
+    "encoding/json"
+    "log/slog"
+    "net/http"
+
+    "github.com/pumpingbytes/go-kit/apierror"
+)
+
+func writeAPIError(w http.ResponseWriter, r *http.Request, logger *slog.Logger, err error) {
+    if err == nil {
+        return
+    }
+
+    var out *apierror.APIError
+
+    if ae, ok := apierror.As(err); ok {
+        out = ae
+        if out.Status == 0 {
+            out = out.WithStatus(http.StatusBadRequest)
+        }
+    } else if ae, ok := apierror.FromAppError(err); ok {
+        out = ae
+        if out.Status == 0 {
+            out = out.WithStatus(http.StatusInternalServerError)
+        }
+    } else {
+        out = apierror.ErrInternalServerError
+    }
+
+    logger.Error("request failed",
+        slog.String("path", r.URL.Path),
+        slog.String("error", err.Error()),
+    )
+
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(out.Status)
+    _ = json.NewEncoder(w).Encode(out.Cleanup())
+}
+```
+
+#### Gin
+
+```go
+package api
+
+import (
+    "log/slog"
+    "net/http"
+
+    "github.com/gin-gonic/gin"
+    "github.com/pumpingbytes/go-kit/apierror"
+)
+
+func handleError(ctx *gin.Context, logger *slog.Logger, err error) {
+    if err == nil {
+        return
+    }
+
+    var out *apierror.APIError
+
+    if ae, ok := apierror.As(err); ok {
+        out = ae
+        if out.Status == 0 {
+            out = out.WithStatus(http.StatusBadRequest)
+        }
+    } else if ae, ok := apierror.FromAppError(err); ok {
+        out = ae
+        if out.Status == 0 {
+            out = out.WithStatus(http.StatusInternalServerError)
+        }
+    } else {
+        out = apierror.ErrInternalServerError
+    }
+
+    logger.Error("request failed",
+        slog.String("path", ctx.FullPath()),
+        slog.String("error", err.Error()),
+    )
+
+    ctx.AbortWithStatusJSON(out.Status, out.Cleanup())
+}
+```
+
+These examples intentionally keep policy small and explicit:
+
+- `apierror.As(err)` wins when the error is already transport-ready
+- `apierror.FromAppError(err)` adapts `apperror.Error`
+- unknown errors fall back to `apierror.ErrInternalServerError`
+
 ### Request ID propagation
 
 ```go

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pumpingbytes/go-kit/apperror"
 	"github.com/pumpingbytes/go-kit/context"
 	"github.com/pumpingbytes/go-kit/httpmw"
 )
@@ -365,6 +366,69 @@ func TestAs(t *testing.T) {
 			}
 			if got.Code != tc.wantCode {
 				t.Fatalf("As() code = %q, want %q", got.Code, tc.wantCode)
+			}
+		})
+	}
+}
+
+func TestFromAppError(t *testing.T) {
+	t.Parallel()
+
+	direct := &apperror.Error{Code: "INVALID", Message: "bad input", Status: 422}
+	wrapped := fmt.Errorf("wrap: %w", &apperror.Error{Code: "FAILED", Message: "save failed", Status: 500})
+	other := errors.New("nope")
+
+	cases := []struct {
+		name   string
+		err    error
+		wantOK bool
+		want   *APIError
+	}{
+		{
+			name:   "direct apperror",
+			err:    direct,
+			wantOK: true,
+			want:   &APIError{Code: "INVALID", Message: "bad input", Status: 422},
+		},
+		{
+			name:   "wrapped apperror",
+			err:    wrapped,
+			wantOK: true,
+			want:   &APIError{Code: "FAILED", Message: "save failed", Status: 500},
+		},
+		{
+			name:   "other error",
+			err:    other,
+			wantOK: false,
+			want:   nil,
+		},
+		{
+			name:   "nil error",
+			err:    nil,
+			wantOK: false,
+			want:   nil,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := FromAppError(tc.err)
+			if ok != tc.wantOK {
+				t.Fatalf("FromAppError() ok = %v, want %v", ok, tc.wantOK)
+			}
+			if !tc.wantOK {
+				if got != nil {
+					t.Fatalf("FromAppError() = %#v, want nil", got)
+				}
+				return
+			}
+			assertAPIErrorPtr(t, got, tc.want)
+			if len(got.Context) != 0 {
+				t.Fatalf("FromAppError() context = %s, want empty", string(got.Context))
+			}
+			if len(got.Debug) != 0 {
+				t.Fatalf("FromAppError() debug = %s, want empty", string(got.Debug))
 			}
 		})
 	}
