@@ -2,11 +2,14 @@ package context
 
 import (
 	"bytes"
+	stdcontext "context"
 	"reflect"
 	"testing"
 
 	"github.com/ygrebnov/keys"
 )
+
+type testValueCtxKey struct{}
 
 func TestCtx(t *testing.T) {
 	tests := []struct {
@@ -105,5 +108,36 @@ func TestContextMarshal(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPutValueAndGetValue(t *testing.T) {
+	t.Parallel()
+
+	t.Run("round trip", func(t *testing.T) {
+		ctx := PutValue(stdcontext.Background(), testValueCtxKey{}, 42)
+		if got := GetValue(ctx, testValueCtxKey{}, 0); got != 42 {
+			t.Fatalf("GetValue() = %d, want 42", got)
+		}
+	})
+
+	t.Run("fallback when missing", func(t *testing.T) {
+		if got := GetValue(stdcontext.Background(), testValueCtxKey{}, "fallback"); got != "fallback" {
+			t.Fatalf("GetValue() = %q, want fallback", got)
+		}
+	})
+
+	t.Run("fallback on wrong type", func(t *testing.T) {
+		ctx := stdcontext.WithValue(stdcontext.Background(), testValueCtxKey{}, "not-an-int")
+		if got := GetValue(ctx, testValueCtxKey{}, 7); got != 7 {
+			t.Fatalf("GetValue() = %d, want 7", got)
+		}
+	})
+
+	t.Run("typed nil pointer is preserved", func(t *testing.T) {
+		ctx := PutValue[*bytes.Buffer](stdcontext.Background(), testValueCtxKey{}, nil)
+		if got := GetValue[*bytes.Buffer](ctx, testValueCtxKey{}, bytes.NewBufferString("fallback")); got != nil {
+			t.Fatalf("GetValue() = %v, want nil", got)
+		}
+	})
 }
 

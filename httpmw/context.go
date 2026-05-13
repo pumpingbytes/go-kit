@@ -10,17 +10,12 @@ type requestIDCtxKey struct{}
 
 // PutRequestID returns a new context containing the request ID.
 func PutRequestID(ctx context.Context, requestID string) context.Context {
-	return context.WithValue(ctx, requestIDCtxKey{}, requestID)
+	return kitcontext.PutValue(ctx, requestIDCtxKey{}, requestID)
 }
 
 // GetRequestID returns the request ID from context, if present.
 func GetRequestID(ctx context.Context) string {
-	if v := ctx.Value(requestIDCtxKey{}); v != nil {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
+	return kitcontext.GetValue(ctx, requestIDCtxKey{}, "")
 }
 
 type traceIDs struct {
@@ -32,27 +27,17 @@ type traceIDsCtxKey struct{}
 
 // PutTraceIDs returns a new context containing trace and span IDs.
 func PutTraceIDs(ctx context.Context, traceID, spanID string) context.Context {
-	return context.WithValue(ctx, traceIDsCtxKey{}, traceIDs{TraceID: traceID, SpanID: spanID})
+	return kitcontext.PutValue(ctx, traceIDsCtxKey{}, traceIDs{TraceID: traceID, SpanID: spanID})
 }
 
 // GetTraceID returns the trace ID from context, if present.
 func GetTraceID(ctx context.Context) string {
-	if v := ctx.Value(traceIDsCtxKey{}); v != nil {
-		if t, ok := v.(traceIDs); ok {
-			return t.TraceID
-		}
-	}
-	return ""
+	return kitcontext.GetValue(ctx, traceIDsCtxKey{}, traceIDs{}).TraceID
 }
 
 // GetSpanID returns the span ID from context, if present.
 func GetSpanID(ctx context.Context) string {
-	if v := ctx.Value(traceIDsCtxKey{}); v != nil {
-		if t, ok := v.(traceIDs); ok {
-			return t.SpanID
-		}
-	}
-	return ""
+	return kitcontext.GetValue(ctx, traceIDsCtxKey{}, traceIDs{}).SpanID
 }
 
 // ErrorContext extracts user-safe request correlation fields from the runtime context

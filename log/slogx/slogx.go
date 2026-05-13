@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	kitcontext "github.com/pumpingbytes/go-kit/context"
 	pkglog "github.com/pumpingbytes/go-kit/log"
 )
 
@@ -66,15 +67,13 @@ type loggerCtxKey struct{}
 
 // PutLogger returns a new context with the provided logger.
 func PutLogger(ctx context.Context, logger *slog.Logger) context.Context {
-	return context.WithValue(ctx, loggerCtxKey{}, logger)
+	return kitcontext.PutValue(ctx, loggerCtxKey{}, logger)
 }
 
 // GetLogger returns the logger from the context, falling back to a stderr JSON logger.
 func GetLogger(ctx context.Context) *slog.Logger {
-	if v := ctx.Value(loggerCtxKey{}); v != nil {
-		if logger, ok := v.(*slog.Logger); ok && logger != nil {
-			return logger
-		}
+	if logger := kitcontext.GetValue[*slog.Logger](ctx, loggerCtxKey{}, nil); logger != nil {
+		return logger
 	}
 	return defaultStdErrLogger()
 }

@@ -1,6 +1,7 @@
 package context
 
 import (
+	stdcontext "context"
 	"encoding/json"
 
 	"github.com/ygrebnov/keys"
@@ -26,6 +27,22 @@ func Ctx(key keys.Key, value any, rest ...any) Context {
 		ctx[k] = rest[i+1]
 	}
 	return ctx
+}
+
+// PutValue returns a new stdlib context.Context containing the provided typed value.
+func PutValue[T any](ctx stdcontext.Context, key any, value T) stdcontext.Context {
+	return stdcontext.WithValue(ctx, key, value)
+}
+
+// GetValue returns a typed value from stdlib context.Context, or fallback when missing
+// or when the stored value has a different type.
+func GetValue[T any](ctx stdcontext.Context, key any, fallback T) T {
+	if v := ctx.Value(key); v != nil {
+		if typed, ok := v.(T); ok {
+			return typed
+		}
+	}
+	return fallback
 }
 
 // Marshal returns the JSON representation of the context payload.
