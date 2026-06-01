@@ -14,12 +14,19 @@ The module is intentionally lightweight and stays close to the standard library.
 
 ## Requirements
 
-- Go `1.25+`
+- Go `1.22+` for the main `github.com/pumpingbytes/go-kit` module
+- Go `1.25+` only for the separate `github.com/pumpingbytes/go-kit/dberror/postgres` module
 
 ## Installation
 
 ```bash
 go get github.com/pumpingbytes/go-kit
+```
+
+For the Postgres/pgx database classifier, install the nested module separately:
+
+```bash
+go get github.com/pumpingbytes/go-kit/dberror/postgres
 ```
 
 ## Packages
@@ -30,7 +37,6 @@ go get github.com/pumpingbytes/go-kit
 | `apierror` | Standardized JSON error envelope with stable codes, HTTP status, client-safe context, and internal debug payloads |
 | `context` | User-safe serializable metadata payloads plus small generic helpers for typed `context.Context` values |
 | `dberror` | Small interfaces for database error classification |
-| `dberror/postgres` | Postgres/pgx classifier implementation for `dberror.Classifier` |
 | `httpmw` | `net/http` helpers for request correlation, CORS support, and access log field definitions |
 | `httpmw/slogx` | `slog` adapters for request context enrichment and HTTP access logging |
 | `log` | Output configuration and writer setup for application logging |
@@ -493,7 +499,8 @@ Keys use `github.com/ygrebnov/keys` for consistency.
 ### `dberror`
 
 - `Classifier` defines a tiny interface for database-specific error classification
-- `dberror/postgres.Classifier` provides a pgx/Postgres implementation that can be reused from repositories without coupling service code to transport-layer errors
+- the pgx/Postgres implementation lives in the separate nested module `github.com/pumpingbytes/go-kit/dberror/postgres`
+- that split keeps the main module compatible with Go `1.22` while allowing the Postgres classifier to track newer `pgx` releases and toolchain requirements independently
 
 ### `httpmw`
 
